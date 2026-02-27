@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "polymarket-data"
+version = "0.1.0"
+description = "Fetch historical order book data from the Polymarket subgraph"
+requires-python = ">=3.11"
+dependencies = []   # stdlib only (urllib, json, dataclasses)
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.5"]
+polars = ["polars>=1.0"]
+all = ["pandas>=1.5", "polars>=1.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polymarket_data*"]
