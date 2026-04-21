@@ -151,6 +151,19 @@ class PolymarketData:
             raise ValueError(f"No market found for slug: {slug!r}")
         return info
 
+    def get_event(self, event_slug: str) -> list[MarketInfo]:
+        """Return all markets belonging to an event slug.
+
+        Use this when you have a Polymarket event URL slug (e.g.
+        ``btc-updown-5m-1776732000``) rather than a direct market slug.
+        Most events contain a single market; some (e.g. multi-outcome events)
+        contain several.
+        """
+        markets = self._gamma.get_markets_by_event_slug(event_slug)
+        if not markets:
+            raise ValueError(f"No event found for slug: {event_slug!r}")
+        return markets
+
     def fetch_trades(
         self,
         slug: str,
