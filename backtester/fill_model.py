@@ -1,51 +1,45 @@
 from __future__ import annotations
 
-import math
-from abc import ABC, abstractmethod
 from typing import Optional
 
-from .datamodel import Bar, Order, Trade
+from .datamodel import OpenOrder
 
 
-class FillModel(ABC):
-    @abstractmethod
-    def fill_price(self, next_bar: Bar) -> Optional[float]:
-        """Return execution price from the next bar, or None if unfillable."""
-        ...
+def match_trade_to_order(order: OpenOrder, trade_price: float, trade_side: str) -> Optional[float]:
+    """Return the fill price if this trade matches the resting order, else None.
 
-    def try_fill(self, order: Order, next_bar: Bar) -> Optional[Trade]:
-        price = self.fill_price(next_bar)
-        if price is None or math.isnan(price):
-            return None
-        # Limit check: buy fills if market price <= limit; sell fills if market price >= limit
-        if order.quantity > 0 and price > order.price:
-            return None
-        if order.quantity < 0 and price < order.price:
-            return None
-        return Trade(
-            symbol=order.symbol,
-            price=price,
-            quantity=order.quantity,
-            buyer="SUBMISSION" if order.quantity > 0 else "",
-            seller="SUBMISSION" if order.quantity < 0 else "",
-            timestamp=next_bar.timestamp,
-        )
+    Optimistic at-or-through semantics:
 
+    * Buy limit at price p fills the first time a SELL-side trade prints
+      at price <= p (someone hit the bid).
+    * Sell limit at price p fills the first time a BUY-side trade prints
+      at price >= p (someone lifted the offer).
 
-class NextBarOpen(FillModel):
-    """Fill at the open of the next bar. Most conservative — default."""
-    def fill_price(self, next_bar: Bar) -> Optional[float]:
-        return next_bar.open
+    Marketable orders (buy at p>=1.0, sell at p<=0.0) collapse to "fill at
+    next opposing-side trade's price." Caller is responsible for separating
+    marketable orders from resting ones (they fill against the other side).
 
-
-class NextBarVWAP(FillModel):
-    """Fill at the VWAP of the next bar; falls back to open on empty bars."""
-    def fill_price(self, next_bar: Bar) -> Optional[float]:
-        v = next_bar.vwap
-        return v if not math.isnan(v) else next_bar.open
+    For resting limits the fill price equals the limit (you got your level),
+    not the trade price, since the trade price is what the *other* side
+    paid. Marketable fills use the trade price.
+    """
+    is_buy = order.quantity > 0
+    if is_buy:
+        # Resting buy: fills when SELL-side trade prints at-or-through limit
+        if trade_side == "SELL" and trade_price <= order.price:
+            return order.price
+        return None
+    else:
+        # Resting sell: fills when BUY-side trade prints at-or-through limit
+        if trade_side == "BUY" and trade_price >= order.price:
+            return order.price
+        return None
 
 
-class NextBarClose(FillModel):
-    """Fill at the close of the next bar."""
-    def fill_price(self, next_bar: Bar) -> Optional[float]:
-        return next_bar.close
+def is_marketable(order_price: float, is_buy: bool) -> bool:
+    """An order is marketable if its limit guarantees it crosses the spread.
+
+    Buys at price >= 1.0 and sells at price <= 0.0 are treated as market
+    orders (they consume the next opposing-side trade).
+    """
+    return order_price >= 1.0 if is_buy else order_price <= 0.0
