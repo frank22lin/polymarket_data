@@ -1,6 +1,7 @@
 """Gamma API client — resolves a market slug to token IDs and metadata."""
 
 import json
+import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
@@ -39,6 +40,30 @@ class GammaClient:
         if not data:
             return []
         return [self._parse_market(m) for m in data[0].get("markets", [])]
+
+    def get_markets_by_event_slugs(
+        self,
+        slugs: list[str],
+        batch_size: int = 90,
+        sleep: float = 0.2,
+    ) -> list[MarketInfo]:
+        """Batch-fetch markets for multiple event slugs.
+
+        The Gamma API accepts repeated ``slug=`` query params and caps results
+        at 100 per request.  ``batch_size`` must be ≤ 100; default 90 is safe.
+        Non-existent slugs are silently skipped by the API.
+        """
+        results: list[MarketInfo] = []
+        for i in range(0, len(slugs), batch_size):
+            batch = slugs[i : i + batch_size]
+            qs = "&".join(f"slug={s}" for s in batch) + f"&limit={len(batch)}"
+            data = self._get(f"{GAMMA_API_BASE}/events?{qs}")
+            for event in data:
+                for m in event.get("markets", []):
+                    results.append(self._parse_market(m))
+            if i + batch_size < len(slugs):
+                time.sleep(sleep)
+        return results
 
     def list_markets(
         self,

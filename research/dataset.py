@@ -121,41 +121,53 @@ class DatasetCache:
         self,
         start_date: str,
         end_date: str,
-        tag_slug: str = TAG_SLUG,
         force: bool = False,
-        sleep: float = 0.15,
+        sleep: float = 0.2,
+        batch_size: int = 90,
     ) -> None:
-        """Download all matching markets in [start_date, end_date] to disk.
+        """Download all BTC Up/Down 5-min markets in [start_date, end_date] to disk.
 
-        Safe to re-run — already-cached trade files are skipped unless
-        force=True.  Prints a progress line every 50 markets.
+        Enumerates markets by generating expected event slugs every 5 minutes
+        and batch-fetching from the Gamma API (~130 requests for 45 days).
+        Safe to re-run — already-cached trade files are skipped unless force=True.
 
         Parameters
         ----------
         start_date, end_date : str
             ISO date strings, e.g. ``"2026-04-01"`` / ``"2026-06-04"``.
-        tag_slug : str
-            Gamma API tag slug that identifies BTC 5-min markets.
         force : bool
             Re-download trade files even if they already exist.
         sleep : float
-            Seconds to pause between subgraph requests (rate-limit courtesy).
+            Seconds to pause between Gamma API batch requests.
+        batch_size : int
+            Slugs per Gamma API request (max 90; API hard-caps results at 100).
         """
         start_dt = datetime.fromisoformat(start_date).replace(tzinfo=_UTC)
         end_dt   = datetime.fromisoformat(end_date).replace(tzinfo=_UTC)
+        start_ts = int(start_dt.timestamp())
+        end_ts   = int(end_dt.timestamp())
 
-        print(f"Enumerating markets (tag_slug={tag_slug!r}) ...")
-        gamma    = GammaClient()
-        all_markets = gamma.list_markets(tag_slug=tag_slug, closed=True)
-
-        in_range = [
-            m for m in all_markets
-            if m.resolution_time is not None
-            and start_dt <= datetime.fromtimestamp(m.resolution_time, tz=_UTC) <= end_dt
+        # Build expected event slugs: btc-updown-5m-{strike_ts}
+        # resolution_time = strike_ts + 300s; we want resolution_time in [start_ts, end_ts]
+        step = 300
+        first_strike = (start_ts - step) - ((start_ts - step) % step)
+        slugs = [
+            f"btc-updown-5m-{ts}"
+            for ts in range(first_strike, end_ts + step, step)
         ]
-        print(f"  {len(all_markets)} total, {len(in_range)} in [{start_date}, {end_date}]")
+        n_batches = (len(slugs) + batch_size - 1) // batch_size
+        print(f"Enumerating {len(slugs)} candidate slugs in {n_batches} batches ...")
+
+        gamma   = GammaClient()
+        fetched = gamma.get_markets_by_event_slugs(slugs, batch_size=batch_size, sleep=sleep)
+        in_range = [
+            m for m in fetched
+            if m.resolution_time is not None
+            and start_ts <= m.resolution_time <= end_ts
+        ]
+        print(f"  Found {len(in_range)} markets (from {len(fetched)} returned by API)")
         if not in_range:
-            print("  No markets found. Check tag_slug value.")
+            print("  No markets found in range.")
             return
 
         # Update index with any newly discovered markets
@@ -172,7 +184,8 @@ class DatasetCache:
             for m in in_range if m.slug not in known_slugs
         ]
         if new_rows:
-            idx = pd.concat([idx, pd.DataFrame(new_rows)], ignore_index=True)
+            new_df = pd.DataFrame(new_rows).dropna(how="all")
+            idx = pd.concat([idx, new_df], ignore_index=True)
             self._save_index(idx)
             print(f"  Added {len(new_rows)} new entries to index")
 
