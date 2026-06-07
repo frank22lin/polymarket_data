@@ -1,3 +1,4 @@
+from .dataset import DatasetCache, MarketData, SPLITS
 from .strategy import MarketContext, Strategy
 from .volatility_strategies import (
     BTCMinuteFeatureFeed,
@@ -10,6 +11,10 @@ from .volatility_strategies import (
 )
 
 __all__ = [
+    # dataset
+    "DatasetCache",
+    "MarketData",
+    "SPLITS",
     # base
     "MarketContext",
     "Strategy",
