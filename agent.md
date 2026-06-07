@@ -32,11 +32,15 @@ The research process uses an island model:
 
 ## Data Splits
 
-Use BTC Up/Down 5-minute markets only.
+Use BTC Up/Down 5-minute markets only. All splits are constrained to the
+Goldsky subgraph window (Apr 1–28, 2026). The subgraph stopped indexing at
+Apr 28 ~11:00 UTC due to a CTF Exchange v2 contract upgrade. No reliable
+per-trade data exists beyond this date via any public API.
 
 ### Train Set
 
-Date range: 2026-04-01 through 2026-05-15 UTC.
+Date range: 2026-04-01 through 2026-04-21 UTC.
+Markets: ~6,044 (6,031 with trades).
 
 Purpose:
 
@@ -47,7 +51,8 @@ Purpose:
 
 ### Validation Set
 
-Date range: 2026-05-16 through 2026-05-31 UTC.
+Date range: 2026-04-22 through 2026-04-28 UTC.
+Markets: ~2,016 (1,863 with trades after ~11:00 UTC Apr 28 cutoff).
 
 Purpose:
 
@@ -57,14 +62,9 @@ Purpose:
 
 ### Frozen Test Set
 
-Date range: 2026-06-01 through 2026-06-04 UTC.
-
-Purpose:
-
-- Final evaluation only.
-- No parameter changes after reading test results.
-- If the test set is unavailable, freeze the latest fully available four UTC
-  calendar days and document the replacement.
+No test set is available with real trade data. The validation set serves as
+the final hold-out. Do not tune on validation results after selecting a
+strategy.
 
 ### Embargo
 
@@ -344,10 +344,16 @@ Final report must include:
 
 ## Suggested Commands
 
-Start from the existing examples:
+Load data and run a strategy backtest:
 
-```bash
-python3 examples/volatility_btc_updown_backtest.py
+```python
+from research.dataset import DatasetCache, SPLITS
+from research import VolatilityBinaryMarketMaker, BTCMinuteFeatureFeed, HybridRangeEWMAVolatility
+
+cache = DatasetCache("data/btc_5m")
+markets = cache.load_split("train")
+btc_feed = cache.load_btc_feed()
+# ... build strategy, call strategy.backtest(m.listing, m.trades, m.resolution)
 ```
 
 When new experiment runners are created, they should accept:

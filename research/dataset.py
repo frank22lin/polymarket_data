@@ -224,13 +224,6 @@ class DatasetCache:
                 if not trades_df.empty:
                     trades_df["timestamp"] = pd.to_datetime(trades_df["timestamp"], utc=True)
 
-                # If subgraph returned nothing, fall back to CLOB price snapshots.
-                # The CLOB /prices-history endpoint returns 1-min last-trade prices;
-                # we emit one synthetic trade per snapshot (size=1) so the backtester
-                # has a price signal to work with even when subgraph data is unavailable.
-                if trades_df.empty:
-                    trades_df = self._fetch_clob_trades(token_id, start_s, end_s)
-
                 trades_df.to_parquet(self.root / "trades" / f"{slug}.parquet", index=False)
 
                 if i % 50 == 0 or i == len(to_fetch):
@@ -241,52 +234,6 @@ class DatasetCache:
             time.sleep(sleep)
 
         print("fetch() complete.")
-
-    # ── CLOB fallback ─────────────────────────────────────────────────────
-
-    _CLOB_PRICES_URL = "https://clob.polymarket.com/prices-history"
-
-    def _fetch_clob_trades(
-        self,
-        token_id: str,
-        start_s: int,
-        end_s: int,
-    ) -> pd.DataFrame:
-        """Fetch 1-min price snapshots from CLOB and return as synthetic trade records.
-
-        Each price snapshot becomes one trade row with size=1 and side='BUY'.
-        This is an approximation used when the Goldsky subgraph has no data.
-        """
-        empty = pd.DataFrame(columns=["timestamp", "price", "size", "side", "outcome"])
-        try:
-            params = urllib.parse.urlencode({
-                "market":   token_id,
-                "startTs":  start_s,
-                "endTs":    end_s,
-                "fidelity": 1,
-            })
-            req = urllib.request.Request(
-                f"{self._CLOB_PRICES_URL}?{params}",
-                headers={"Accept": "application/json", "User-Agent": "polymarket-data/0.1"},
-            )
-            with urllib.request.urlopen(req, timeout=15) as r:
-                data = json.loads(r.read())
-            history = data.get("history", [])
-            if not history:
-                return empty
-            rows = [
-                {
-                    "timestamp": pd.Timestamp(h["t"], unit="s", tz="UTC"),
-                    "price":     float(h["p"]),
-                    "size":      1.0,
-                    "side":      "BUY",
-                    "outcome":   "Up",
-                }
-                for h in history
-            ]
-            return pd.DataFrame(rows)
-        except Exception:
-            return empty
 
     # ── BTC spot ───────────────────────────────────────────────────────────
 

@@ -229,7 +229,7 @@ class BacktestResult:
         for symbol, bars in self.bars_by_symbol.items():
             if bars is None or bars.empty or "close" not in bars.columns:
                 continue
-            close = bars["close"].astype(float).reindex(idx, method="ffill")
+            close = bars["close"].astype(float).reindex(idx).ffill()
             # Use first non-NaN close as the entry price for the benchmark
             first_valid = close.dropna()
             if first_valid.empty:

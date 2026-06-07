@@ -1,2 +1,9 @@
 .env
 __pycache__/
+*.pyc
+.DS_Store
+data/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
