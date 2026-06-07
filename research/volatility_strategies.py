@@ -187,7 +187,6 @@ class VolatilityBinaryMarketMaker(Strategy):
         btc_feed: BTCMinuteFeatureFeed,
         vol_estimator: VolatilityEstimator,
         strike_ms: int,
-        resolution_ms: int,
         half_spread: float = 0.025,
         quote_size: float = 25.0,
         max_inventory: float = 250.0,
@@ -200,7 +199,6 @@ class VolatilityBinaryMarketMaker(Strategy):
         self.btc_feed = btc_feed
         self.vol_estimator = vol_estimator
         self.strike_ms = strike_ms
-        self.resolution_ms = resolution_ms
         self.half_spread = half_spread
         self.quote_size = quote_size
         self.max_inventory = max_inventory
@@ -217,23 +215,26 @@ class VolatilityBinaryMarketMaker(Strategy):
         self.strike = None
         self.last_center = None
 
-    def _fair_value(self, ts_ms: int) -> tuple[float, VolSnapshot] | None:
-        if ts_ms < self.strike_ms:
+    def observe(self, ts) -> dict:
+        return {"btc_price": self.btc_feed.price_at(int(ts.timestamp() * 1000))}
+
+    def _fair_value(self, ctx: MarketContext) -> tuple[float, VolSnapshot] | None:
+        if ctx.timestamp < self.strike_ms:
             return None
         if self.strike is None:
             self.strike = self.btc_feed.price_at(self.strike_ms)
-        spot = self.btc_feed.price_at(ts_ms)
-        vol = self.vol_estimator.estimate(ts_ms)
+        spot = ctx.observations["btc_price"]
+        vol = self.vol_estimator.estimate(ctx.timestamp)
         fair = binary_call_probability(
             spot=spot,
             strike=self.strike,
             sigma_annual=vol.sigma_annual,
-            seconds_to_expiry=(self.resolution_ms - ts_ms) / 1000.0,
+            seconds_to_expiry=ctx.seconds_to_expiry,
         )
         return fair, vol
 
     def on_tick(self, ctx: MarketContext) -> list[Order | Cancel]:
-        value = self._fair_value(ctx.timestamp)
+        value = self._fair_value(ctx)
         if value is None:
             return []
         fair, vol = value
@@ -254,7 +255,7 @@ class VolatilityBinaryMarketMaker(Strategy):
         bid = max(0.01, center - spread)
         ask = min(0.99, center + spread)
 
-        instructions: list = [Cancel(o.order_id) for o in ctx.open_orders]
+        instructions: list = ctx.cancel_all()
         if ctx.position < self.max_inventory:
             instructions.append(Order(symbol=ctx.symbol, price=bid, quantity=self.quote_size))
         if ctx.position > 0:
@@ -266,7 +267,6 @@ class VolatilityBinaryMarketMaker(Strategy):
         return {
             **super().params(),
             "strike_ms": self.strike_ms,
-            "resolution_ms": self.resolution_ms,
             "half_spread": self.half_spread,
             "quote_size": self.quote_size,
             "max_inventory": self.max_inventory,

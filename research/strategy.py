@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Union
 
+import pandas as pd
+
 from backtester.datamodel import (
     Bar,
     Cancel,
@@ -30,7 +32,7 @@ class MarketContext:
     position: float
     cash: float
     last_price: float
-    bar: Bar
+    bar: Bar                   # synthetic OHLCV from market trades since last tick; always set
     own_trades: List[Trade]
     market_trades: List[Trade]
     open_orders: List[OpenOrder]
@@ -39,6 +41,10 @@ class MarketContext:
     @property
     def seconds_to_expiry(self) -> float:
         return max(0.0, (self.listing.resolution_time - self.timestamp) / 1000.0)
+
+    def cancel_all(self) -> List[Cancel]:
+        """Return Cancel instructions for every open order on this symbol."""
+        return [Cancel(o.order_id) for o in self.open_orders]
 
     @classmethod
     def from_state(cls, state: TradingState, symbol: Symbol) -> "MarketContext":
@@ -49,7 +55,7 @@ class MarketContext:
             position=state.position.get(symbol, 0.0),
             cash=state.cash,
             last_price=state.last_price.get(symbol, math.nan),
-            bar=state.bars.get(symbol),
+            bar=state.bars[symbol],            # always populated for active symbols
             own_trades=state.own_trades.get(symbol, []),
             market_trades=state.market_trades.get(symbol, []),
             open_orders=state.open_orders.get(symbol, []),
@@ -109,6 +115,19 @@ class Strategy(ABC):
     def on_market_open(self, listing: Listing) -> None:
         """Called once the first time each symbol appears in the engine."""
 
+    def observe(self, ts: pd.Timestamp) -> Dict[str, float]:
+        """Return external observations injected into ctx.observations each tick.
+
+        Override to expose data (e.g. BTC spot) without passing a feed as a
+        constructor arg. Reads cleanly from ctx.observations["btc_price"] etc.
+
+        Example::
+
+            def observe(self, ts):
+                return {"btc_price": self.btc_feed.price_at(int(ts.timestamp() * 1000))}
+        """
+        return {}
+
     def reset(self) -> None:
         """Clear per-run state. Override in subclasses; always call super().reset()."""
         self._seen_symbols = set()
@@ -139,7 +158,10 @@ class Strategy(ABC):
         observations_fn: Optional[Callable] = None,
         **engine_kwargs,
     ) -> BacktestResult:
-        """Run a full backtest. Calls reset() first for a clean slate."""
+        """Run a full backtest. Calls reset() first for a clean slate.
+
+        observations_fn overrides self.observe() when provided explicitly.
+        """
         self.reset()
         return BacktestEngine(
             listings=listings,
@@ -153,7 +175,7 @@ class Strategy(ABC):
             taker_fee_bps=self.taker_fee_bps,
             maker_rebate_bps=self.maker_rebate_bps,
             position_limit=self.position_limit,
-            observations_fn=observations_fn,
+            observations_fn=observations_fn if observations_fn is not None else self.observe,
             **engine_kwargs,
         ).run()
 
