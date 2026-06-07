@@ -238,7 +238,7 @@ class BacktestResult:
             cost += shares_per_market * entry_price
             # After settlement, MTM at resolution
             res = self.resolutions.get(symbol, float("nan"))
-            mtm = close.fillna(method="ffill").fillna(res)
+            mtm = close.ffill().fillna(res)
             total = total + shares_per_market * mtm
         # Re-base to initial_cash so the curve is comparable to equity_curve
         if cost == 0:

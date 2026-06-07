@@ -15,6 +15,9 @@ pip install "polymarket-data[polars]"
 
 # Both
 pip install "polymarket-data[all]"
+
+# Chainlink Data Streams websocket support
+pip install "polymarket-data[chainlink]"
 ```
 
 Requires Python 3.11+. The core package has no mandatory dependencies —
@@ -127,3 +130,39 @@ Supported frequency strings: `"1h"`, `"4h"`, `"1d"`, `"5min"`, `"1w"`, etc.
 |---|---|
 | [Gamma API](https://gamma-api.polymarket.com) | Market metadata (slug → token IDs) |
 | [Goldsky subgraph](https://goldsky.com) | Historical filled trades |
+
+### Chainlink BTC/USD Data Streams
+
+Polymarket BTC Up/Down markets resolve against the Chainlink BTC/USD Data
+Stream, product name `BTC/USD-RefPrice-DS-Premium-Global-003`.
+
+The Chainlink stream requires Data Streams credentials and the full feed ID.
+Set:
+
+```bash
+export STREAMS_API_KEY="..."
+export STREAMS_API_SECRET="..."
+export CHAINLINK_BTC_USD_FEED_ID="0x..."
+```
+
+Then run:
+
+```bash
+python examples/stream_chainlink_btc.py
+```
+
+If your Chainlink account uses a production websocket host, set it explicitly:
+
+```bash
+export STREAMS_WS_HOST="..."
+```
+
+### BTC Up/Down Volatility Backtest
+
+The example below compares three BTC 5-minute Up/Down market makers:
+fixed volatility, EWMA realized volatility, and a hybrid EWMA/range-vol model
+that widens quotes during jumps.
+
+```bash
+python examples/volatility_btc_updown_backtest.py
+```

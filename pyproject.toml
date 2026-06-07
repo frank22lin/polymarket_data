@@ -12,8 +12,9 @@ dependencies = []   # stdlib only (urllib, json, dataclasses)
 [project.optional-dependencies]
 pandas = ["pandas>=1.5"]
 polars = ["polars>=1.0"]
-all = ["pandas>=1.5", "polars>=1.0"]
+chainlink = ["websockets>=12"]
+all = ["pandas>=1.5", "polars>=1.0", "websockets>=12"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["polymarket_data*"]
+include = ["polymarket_data*", "backtester*", "research*"]
