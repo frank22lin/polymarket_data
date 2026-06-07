@@ -40,11 +40,13 @@ from polymarket_data.core import _parse_trade_record
 
 _UTC = timezone.utc
 
-# ── Split definitions (from agent.md) ─────────────────────────────────────────
+# ── Split definitions ──────────────────────────────────────────────────────────
+# Constrained to the Goldsky subgraph data window (Apr 1 – Apr 28, 2026).
+# The subgraph stopped indexing at Apr 28 ~11:00 UTC due to a CTF Exchange
+# contract upgrade. May/Jun markets have no reliable per-trade data.
 SPLITS: dict[str, tuple[datetime, datetime]] = {
-    "train":      (datetime(2026, 4, 1, tzinfo=_UTC),  datetime(2026, 5, 15, 23, 59, 59, tzinfo=_UTC)),
-    "validation": (datetime(2026, 5, 16, tzinfo=_UTC), datetime(2026, 5, 31, 23, 59, 59, tzinfo=_UTC)),
-    "test":       (datetime(2026, 6, 1, tzinfo=_UTC),  datetime(2026, 6, 4, 23, 59, 59, tzinfo=_UTC)),
+    "train":      (datetime(2026, 4, 1,  tzinfo=_UTC), datetime(2026, 4, 21, 23, 59, 59, tzinfo=_UTC)),
+    "validation": (datetime(2026, 4, 22, tzinfo=_UTC), datetime(2026, 4, 28, 23, 59, 59, tzinfo=_UTC)),
 }
 
 # For BTC Up/Down 5-min markets the market window is exactly 5 minutes.
@@ -106,10 +108,13 @@ class DatasetCache:
 
     def _load_index(self) -> pd.DataFrame:
         if not self._index_path.exists():
-            return pd.DataFrame(columns=[
-                "slug", "question", "resolution_time_s",
-                "resolution_value", "token_id_0",
-            ])
+            return pd.DataFrame({
+                "slug":              pd.Series(dtype="str"),
+                "question":          pd.Series(dtype="str"),
+                "resolution_time_s": pd.Series(dtype="float64"),
+                "resolution_value":  pd.Series(dtype="float64"),
+                "token_id_0":        pd.Series(dtype="str"),
+            })
         return pd.read_parquet(self._index_path)
 
     def _save_index(self, df: pd.DataFrame) -> None:
@@ -218,6 +223,14 @@ class DatasetCache:
                 )
                 if not trades_df.empty:
                     trades_df["timestamp"] = pd.to_datetime(trades_df["timestamp"], utc=True)
+
+                # If subgraph returned nothing, fall back to CLOB price snapshots.
+                # The CLOB /prices-history endpoint returns 1-min last-trade prices;
+                # we emit one synthetic trade per snapshot (size=1) so the backtester
+                # has a price signal to work with even when subgraph data is unavailable.
+                if trades_df.empty:
+                    trades_df = self._fetch_clob_trades(token_id, start_s, end_s)
+
                 trades_df.to_parquet(self.root / "trades" / f"{slug}.parquet", index=False)
 
                 if i % 50 == 0 or i == len(to_fetch):
@@ -228,6 +241,52 @@ class DatasetCache:
             time.sleep(sleep)
 
         print("fetch() complete.")
+
+    # ── CLOB fallback ─────────────────────────────────────────────────────
+
+    _CLOB_PRICES_URL = "https://clob.polymarket.com/prices-history"
+
+    def _fetch_clob_trades(
+        self,
+        token_id: str,
+        start_s: int,
+        end_s: int,
+    ) -> pd.DataFrame:
+        """Fetch 1-min price snapshots from CLOB and return as synthetic trade records.
+
+        Each price snapshot becomes one trade row with size=1 and side='BUY'.
+        This is an approximation used when the Goldsky subgraph has no data.
+        """
+        empty = pd.DataFrame(columns=["timestamp", "price", "size", "side", "outcome"])
+        try:
+            params = urllib.parse.urlencode({
+                "market":   token_id,
+                "startTs":  start_s,
+                "endTs":    end_s,
+                "fidelity": 1,
+            })
+            req = urllib.request.Request(
+                f"{self._CLOB_PRICES_URL}?{params}",
+                headers={"Accept": "application/json", "User-Agent": "polymarket-data/0.1"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+            history = data.get("history", [])
+            if not history:
+                return empty
+            rows = [
+                {
+                    "timestamp": pd.Timestamp(h["t"], unit="s", tz="UTC"),
+                    "price":     float(h["p"]),
+                    "size":      1.0,
+                    "side":      "BUY",
+                    "outcome":   "Up",
+                }
+                for h in history
+            ]
+            return pd.DataFrame(rows)
+        except Exception:
+            return empty
 
     # ── BTC spot ───────────────────────────────────────────────────────────
 
